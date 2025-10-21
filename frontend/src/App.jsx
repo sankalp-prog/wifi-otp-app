@@ -4,36 +4,39 @@ import React, { useEffect, useState } from 'react';
 function App() {
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
-  const [step, setStep] = useState('request'); // request | verify
+  const [step, setStep] = useState('request'); // 'request' | 'verify'
   const [message, setMessage] = useState('');
+  const [token, setToken] = useState(null);
 
-   // ================== BrowserCap section starts ==================
-  // useEffect(() => {
-  //   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+  // ================== CAPPORT token handling ==================
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get('token');
+    if (t) setToken(t);
+    else {
+      // fallback for testing without a gateway
+      const fallback = Math.random().toString(36).slice(2);
+      setToken(fallback);
+    }
+  }, []);
 
-  //   // Build client-side browser capability info
-  //   const browserInfo = {
-  //     userAgent: navigator.userAgent,
-  //     platform: navigator.platform,
+  // ================== Optional: browser capability info ==================
+  useEffect(() => {
+    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+    const browserInfo = {
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      language: navigator.language,
+    };
 
-  //   };
+    fetch(`${API_BASE_URL}/browser-info`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(browserInfo),
+    }).catch(() => {});
+  }, []);
 
-  //   // Send it to backend (non-blocking)
-  //   fetch(`${API_BASE_URL}/browser-info`, {
-  //     method: 'POST',
-  //     headers: { 'Content-Type': 'application/json' },
-  //     body: JSON.stringify(browserInfo)
-  //   }).catch(err => console.error('Failed to send browser info:', err));
-  // }, []);
-  // ================== BrowserCap section ends ==================
-
-  async function test() {
-  //  const res = await fetch('https://api.ipify.org?format=json');
-  //  const data = await res.json();
-  //  console.log('Public IP:', data.ip);
-  }
-  test()
-  // Send OTP
+  // ================== Send OTP ==================
   const sendOtp = async () => {
     try {
       const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -45,7 +48,7 @@ function App() {
       const res = await fetch(`${API_BASE_URL}/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, browserInfo }),
+        body: JSON.stringify({ email, browserInfo, token }),
       });
       const data = await res.json();
       setMessage(data.message || data.error);
@@ -55,25 +58,35 @@ function App() {
     }
   };
 
-  // Verify OTP
+  // ================== Verify OTP + CAPPORT state update ==================
   const verifyOtp = async () => {
     try {
       const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
       const res = await fetch(`${API_BASE_URL}/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, otp }),
+        body: JSON.stringify({ email, otp, token }),
       });
       const data = await res.json();
-      setMessage(data.message || data.error);
+
+      if (data.success) {
+        setMessage('✅ Authentication successful! You now have Internet access.');
+        // Force CAPPORT API poll so OS sees captive:false immediately
+        await fetch(`${API_BASE_URL}/capport/api/${token}`, {
+          cache: 'no-store',
+        }).catch(() => {});
+      } else {
+        setMessage(data.error || 'Failed to verify OTP');
+      }
     } catch (err) {
       setMessage('Failed to verify OTP');
     }
   };
 
+  // ================== UI ==================
   return (
     <div className="container">
-      <h1>Authenticate using OTP </h1>
+      <h1>Authenticate using OTP</h1>
 
       {step === 'request' && (
         <div className="form">
