@@ -6,9 +6,6 @@ import { open } from 'sqlite';
 import cors from 'cors';
 import http from 'http';
 import { UAParser } from 'ua-parser-js';
-import path from 'path';
-import fs from 'fs/promises';
-import { fileURLToPath } from 'url';
 
 dotenv.config();
 const app = express();
@@ -24,32 +21,25 @@ const db = await open({
   driver: sqlite3.Database,
 });
 
-// Existing tables
+// OTP table
 await db.exec(`CREATE TABLE IF NOT EXISTS otps (
   email TEXT, otp TEXT, expires INTEGER
 )`);
 
+// CLIENT INFO now holds captive state as well
 await db.exec(`CREATE TABLE IF NOT EXISTS client_info (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT,
   user_agent TEXT,
   client_IP TEXT,
+  mac_address TEXT,
   browser TEXT,
   browser_version TEXT,
   os TEXT,
   os_version TEXT,
   device TEXT,
   engine TEXT,
-  is_mobile INTEGER
-)`);
-
-// CAPPORT session state table
-await db.exec(`CREATE TABLE IF NOT EXISTS capport_sessions (
-  token TEXT PRIMARY KEY,
-  email TEXT,
-  mac TEXT,
-  ip4 TEXT,
-  ip6 TEXT,
+  is_mobile INTEGER,
   captive INTEGER DEFAULT 1,
   expires_at INTEGER
 )`);
@@ -65,17 +55,28 @@ const transporter = nodemailer.createTransport({
 /* ================================================================
    RFC 8908 CAPPORT API
 ================================================================ */
-app.get('/capport/api/:token', async (req, res) => {
-  const token = req.params.token;
+app.get('/capport/api', async (req, res) => {
+  const ip = req.query.ip || req.ip;
+  const mac = req.query.mac;
+
   res.setHeader('Content-Type', 'application/captive+json');
   res.setHeader('Cache-Control', 'private, no-store');
 
-  const row = await db.get('SELECT * FROM capport_sessions WHERE token = ?', [token]);
+  if (!mac) {
+    return res.status(400).send(
+      JSON.stringify({
+        error: 'MAC address required',
+        captive: true,
+      })
+    );
+  }
+
+  const row = await db.get('SELECT * FROM client_info WHERE mac_address = ? AND client_IP = ? ORDER BY id DESC LIMIT 1', [mac, ip]);
 
   const portalUrl = process.env.PORTAL_URL || 'https://cp.example.com/portal';
 
-  // Default response if token not found
   if (!row) {
+    // Default captive = true
     return res.status(200).send(
       JSON.stringify({
         captive: true,
@@ -84,9 +85,9 @@ app.get('/capport/api/:token', async (req, res) => {
     );
   }
 
-  // If session expired, mark captive again
+  // Handle expiration
   if (row.expires_at && Date.now() > row.expires_at) {
-    await db.run('UPDATE capport_sessions SET captive = 1 WHERE token = ?', [token]);
+    await db.run('UPDATE client_info SET captive = 1 WHERE mac_address = ? AND client_IP = ?', [mac, ip]);
     row.captive = 1;
   }
 
@@ -105,18 +106,23 @@ app.get('/capport/api/:token', async (req, res) => {
 });
 
 /* ================================================================
-   OTP FLOW
+   OTP FLOW (uses client_info for state)
 ================================================================ */
 
 // Send OTP
 app.post('/send-otp', async (req, res) => {
-  const { email, token, browserInfo: { userAgent, platform } = {} } = req.body;
+  const { email, mac, browserInfo: { userAgent, platform } = {} } = req.body;
+  const ip = req.ip || req.connection.remoteAddress;
+
+  if (!mac) {
+    return res.status(400).json({ success: false, error: 'MAC address required' });
+  }
+
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const expires = Date.now() + 5 * 60 * 1000; // 5 min
 
   const parser = new UAParser(userAgent);
   const result = parser.getResult();
-  const ip = req.ip || req.connection.remoteAddress;
 
   try {
     await transporter.sendMail({
@@ -128,15 +134,24 @@ app.post('/send-otp', async (req, res) => {
 
     await db.run('INSERT INTO otps (email, otp, expires) VALUES (?, ?, ?)', [email, otp, expires]);
 
+    // Add or update client_info record — captive = 1 until verified
     await db.run(
-      `INSERT INTO client_info
-        (email, user_agent, client_IP, browser, browser_version,
-         os, os_version, device, engine, is_mobile)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO client_info (
+        email, user_agent, client_IP, mac_address, browser, browser_version,
+        os, os_version, device, engine, is_mobile, captive, expires_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+      ON CONFLICT(mac_address, client_IP)
+      DO UPDATE SET
+        email = excluded.email,
+        user_agent = excluded.user_agent,
+        captive = 1,
+        expires_at = excluded.expires_at`,
       [
         email,
         userAgent,
         ip,
+        mac,
         result.browser.name || 'Unknown',
         result.browser.version || '',
         result.os.name || '',
@@ -144,19 +159,9 @@ app.post('/send-otp', async (req, res) => {
         result.device.type || 'Desktop',
         result.engine.name || '',
         result.device.type === 'mobile' ? 1 : 0,
+        Date.now() + 24 * 60 * 60 * 1000,
       ]
     );
-
-    // Create or update CAPPORT session (mark captive)
-    if (token) {
-      await db.run(
-        `INSERT INTO capport_sessions (token, email, captive, expires_at)
-         VALUES (?, ?, 1, ?)
-         ON CONFLICT(token) DO UPDATE
-           SET email = excluded.email, captive = 1`,
-        [token, email, Date.now() + 24 * 60 * 60 * 1000]
-      );
-    }
 
     res.json({ success: true, message: 'OTP sent to email' });
   } catch (err) {
@@ -167,19 +172,24 @@ app.post('/send-otp', async (req, res) => {
 
 // Verify OTP
 app.post('/verify-otp', async (req, res) => {
-  const { email, otp, token } = req.body;
+  const { email, otp, mac } = req.body;
+  const ip = req.ip || req.connection.remoteAddress;
+
+  if (!mac) {
+    return res.status(400).json({ success: false, error: 'MAC address required' });
+  }
+
   const row = await db.get('SELECT * FROM otps WHERE email = ? ORDER BY expires DESC LIMIT 1', [email]);
 
   if (!row) return res.json({ success: false, error: 'No OTP found' });
 
   if (row.otp === otp && Date.now() < row.expires) {
-    // ✅ OTP verified: mark CAPPORT session as open
-    if (token) {
-      await db.run(
-        'UPDATE capport_sessions SET captive = 0, expires_at = ? WHERE token = ?',
-        [Date.now() + 2 * 60 * 60 * 1000, token] // 2-hour session
-      );
-    }
+    // ✅ Mark as non-captive
+    await db.run(
+      'UPDATE client_info SET captive = 0, expires_at = ? WHERE mac_address = ? AND client_IP = ?',
+      [Date.now() + 2 * 60 * 60 * 1000, mac, ip] // 2h
+    );
+
     return res.json({ success: true, message: 'OTP verified' });
   } else {
     return res.json({ success: false, error: 'Invalid or expired OTP' });
@@ -191,4 +201,4 @@ app.post('/verify-otp', async (req, res) => {
 ================================================================ */
 const PORT = process.env.PORT || 8080;
 const httpServer = http.createServer(app);
-httpServer.listen(PORT, '0.0.0.0', () => console.log(`CAPPORT + OTP server running on port ${PORT}`));
+httpServer.listen(PORT, '0.0.0.0', () => console.log(`CAPPORT (client_info-based) + OTP server running on port ${PORT}`));

@@ -1,95 +1,60 @@
 import './App.css';
-import React, { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 function App() {
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
-  const [step, setStep] = useState('request'); // 'request' | 'verify'
+  const [mac, setMac] = useState('');
+  const [step, setStep] = useState('request');
   const [message, setMessage] = useState('');
-  const [token, setToken] = useState(null);
 
-  // ================== CAPPORT token handling ==================
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const t = params.get('token');
-    if (t) setToken(t);
-    else {
-      // fallback for testing without a gateway
-      const fallback = Math.random().toString(36).slice(2);
-      setToken(fallback);
-    }
-  }, []);
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
-  // ================== Optional: browser capability info ==================
-  useEffect(() => {
-    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-    const browserInfo = {
-      userAgent: navigator.userAgent,
-      platform: navigator.platform,
-      language: navigator.language,
-    };
-
-    fetch(`${API_BASE_URL}/browser-info`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(browserInfo),
-    }).catch(() => {});
-  }, []);
-
-  // ================== Send OTP ==================
   const sendOtp = async () => {
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
       const browserInfo = {
         userAgent: navigator.userAgent,
         platform: navigator.platform,
       };
-
       const res = await fetch(`${API_BASE_URL}/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, browserInfo, token }),
+        body: JSON.stringify({ email, mac, browserInfo }),
       });
       const data = await res.json();
       setMessage(data.message || data.error);
       if (data.success) setStep('verify');
-    } catch (err) {
+    } catch {
       setMessage('Failed to send OTP');
     }
   };
 
-  // ================== Verify OTP + CAPPORT state update ==================
   const verifyOtp = async () => {
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
       const res = await fetch(`${API_BASE_URL}/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, otp, token }),
+        body: JSON.stringify({ email, otp, mac }),
       });
       const data = await res.json();
-
       if (data.success) {
-        setMessage('✅ Authentication successful! You now have Internet access.');
-        // Force CAPPORT API poll so OS sees captive:false immediately
-        await fetch(`${API_BASE_URL}/capport/api/${token}`, {
-          cache: 'no-store',
-        }).catch(() => {});
+        setMessage('✅ OTP verified! Internet access unlocked.');
+        await fetch(`${API_BASE_URL}/capport/api?mac=${mac}`, { cache: 'no-store' });
       } else {
-        setMessage(data.error || 'Failed to verify OTP');
+        setMessage(data.error || 'Verification failed.');
       }
-    } catch (err) {
+    } catch {
       setMessage('Failed to verify OTP');
     }
   };
 
-  // ================== UI ==================
   return (
     <div className="container">
-      <h1>Authenticate using OTP</h1>
+      <h1>Network Sign-In (MAC/IP)</h1>
 
       {step === 'request' && (
         <div className="form">
+          <input type="text" placeholder="Device MAC (AA:BB:CC:DD:EE:FF)" value={mac} onChange={(e) => setMac(e.target.value.trim())} />
           <input type="email" placeholder="Enter your email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <button onClick={sendOtp}>Send OTP</button>
         </div>
