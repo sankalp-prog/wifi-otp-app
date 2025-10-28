@@ -4,7 +4,6 @@ import { useState } from 'react';
 function App() {
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
-  const [mac, setMac] = useState('');
   const [step, setStep] = useState('request');
   const [message, setMessage] = useState('');
 
@@ -19,7 +18,7 @@ function App() {
       const res = await fetch(`${API_BASE_URL}/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, mac, browserInfo }),
+        body: JSON.stringify({ email, browserInfo }),
       });
       const data = await res.json();
       setMessage(data.message || data.error);
@@ -34,12 +33,12 @@ function App() {
       const res = await fetch(`${API_BASE_URL}/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, otp, mac }),
+        body: JSON.stringify({ email, otp }),
       });
       const data = await res.json();
       if (data.success) {
         setMessage('✅ OTP verified! Internet access unlocked.');
-        await fetch(`${API_BASE_URL}/capport/api?mac=${mac}`, { cache: 'no-store' });
+        await fetch(`${API_BASE_URL}/capport/api`, { cache: 'no-store' });
       } else {
         setMessage(data.error || 'Verification failed.');
       }
@@ -50,11 +49,10 @@ function App() {
 
   return (
     <div className="container">
-      <h1>Network Sign-In (MAC/IP)</h1>
+      <h1>Authentication</h1>
 
       {step === 'request' && (
         <div className="form">
-          <input type="text" placeholder="Device MAC (AA:BB:CC:DD:EE:FF)" value={mac} onChange={(e) => setMac(e.target.value.trim())} />
           <input type="email" placeholder="Enter your email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <button onClick={sendOtp}>Send OTP</button>
         </div>
