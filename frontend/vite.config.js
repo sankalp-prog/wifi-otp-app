@@ -8,9 +8,9 @@ export default defineConfig({
   server: {
     host: '10.40.13.182',
     port: 5000,
-//    https: {
-//      key: fs.readFileSync('nginx-selfsigned.key'),
-//      cert: fs.readFileSync('nginx-selfsigned.crt'),
-//    }
+    https: {
+      key: fs.readFileSync('nginx-selfsigned.key'),
+      cert: fs.readFileSync('nginx-selfsigned.crt'),
+    }
   }
 })
