@@ -186,13 +186,7 @@ app.post('/send-otp', async (req, res) => {
         email, user_agent, client_IP, mac_address, browser, browser_version,
         os, os_version, device, engine, is_mobile, captive, expires_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-      ON CONFLICT(mac_address, client_IP)
-      DO UPDATE SET
-        email = excluded.email,
-        user_agent = excluded.user_agent,
-        captive = 1,
-        expires_at = excluded.expires_at`,
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
       [
         email,
         userAgent,
