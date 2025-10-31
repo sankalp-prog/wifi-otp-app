@@ -69,6 +69,7 @@ const transporter = nodemailer.createTransport({
 app.get('/capport/api', async (req, res) => {
   const ip = req.query.ip || req.ip;
 //  const mac = req.query.mac;
+  const mac = await readDnsmasqLeases(ip)
 
   res.setHeader('Content-Type', 'application/captive+json');
   res.setHeader('Cache-Control', 'private, no-store');
