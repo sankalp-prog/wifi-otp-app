@@ -15,7 +15,8 @@ function App() {
         userAgent: navigator.userAgent,
         platform: navigator.platform,
       };
-      const res = await fetch(`${API_BASE_URL}/send-otp`, {
+      // const res = await fetch(`${API_BASE_URL}/send-otp`, {
+      const res = await fetch(`/api/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, browserInfo }),
@@ -30,7 +31,8 @@ function App() {
 
   const verifyOtp = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/verify-otp`, {
+      // const res = await fetch(`${API_BASE_URL}/verify-otp`, {
+      const res = await fetch(`/api/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, otp }),

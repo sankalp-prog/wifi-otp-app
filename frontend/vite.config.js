@@ -6,8 +6,8 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: '10.40.13.182',
-    port: 5000,
+    host: '10.12.30.13',
+    port: 443,
     https: {
       key: fs.readFileSync('nginx-selfsigned.key'),
       cert: fs.readFileSync('nginx-selfsigned.crt'),

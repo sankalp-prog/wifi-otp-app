@@ -179,9 +179,9 @@ async function readDnsmasqLeases(searchIP) {
 /* ================================================================
    RFC 8908 CAPPORT API
 ================================================================ */
-app.get('/capport/api', async (req, res) => {
+app.get('/capport', async (req, res) => {
   const ip = req.query.ip || req.ip;
-  const portalUrl = process.env.PORTAL_URL || 'https://cp.example.com/portal';
+  const portalUrl = process.env.PORTAL_URL || 'https://10.12.30.13:443';
 
   log.info('Capport API request received', { ip, queryIP: req.query.ip, requestIP: req.ip });
 
@@ -263,7 +263,7 @@ app.get('/capport/api', async (req, res) => {
 ================================================================ */
 
 // Send OTP
-app.post('/send-otp', async (req, res) => {
+app.post('/api/send-otp', async (req, res) => {
   const { email, browserInfo: { userAgent, platform } = {} } = req.body;
   const ip = req.ip || req.connection.remoteAddress;
 
@@ -354,7 +354,7 @@ app.post('/send-otp', async (req, res) => {
 });
 
 // Verify OTP
-app.post('/verify-otp', async (req, res) => {
+app.post('/api/verify-otp', async (req, res) => {
   const { email, otp } = req.body;
   const ip = req.ip || req.connection.remoteAddress;
 
@@ -413,7 +413,7 @@ app.post('/verify-otp', async (req, res) => {
     }
 
     // Execute iptables rules
-    const interface_name = process.env.INTERFACE_NAME || 'enp0s3';
+    const interface_name = process.env.INTERFACE_NAME || 'eth0';
     const tcpCmd = `sudo /usr/sbin/iptables -t nat -I PREROUTING 1 -i ${interface_name} -p tcp -s ${ip} --dport 53 -j ACCEPT`;
     const udpCmd = `sudo /usr/sbin/iptables -t nat -I PREROUTING 1 -i ${interface_name} -p udp -s ${ip} --dport 53 -j ACCEPT`;
 
