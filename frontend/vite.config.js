@@ -1,6 +1,6 @@
-import { defineConfig } from 'vite'
-import fs from 'fs'
-import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite';
+import fs from 'fs';
+import react from '@vitejs/plugin-react';
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -11,6 +11,6 @@ export default defineConfig({
     https: {
       key: fs.readFileSync('nginx-selfsigned.key'),
       cert: fs.readFileSync('nginx-selfsigned.crt'),
-    }
-  }
-})
+    },
+  },
+});
