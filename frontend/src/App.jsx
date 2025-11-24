@@ -205,7 +205,7 @@ function App() {
           <div className="success-icon">✓</div>
           <h2 className="success-title">Authentication Successful!</h2>
           <p className="success-message">You now have internet access.</p>
-          <p className="session-info">Your session is valid for 2 hours.</p>
+          {/* <p className="session-info">Your session is valid for 2 hours.</p> */}
         </div>
       )}
 
