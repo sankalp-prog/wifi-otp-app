@@ -28,8 +28,8 @@ const log = {
    DB SETUP (same schema as your main server)
 ================================================================ */
 let db;
-// const dbFile = process.env.DB_FILE || './data/otp.db';
-const dbFile = './data/otp1.db';
+const dbFile = process.env.DB_FILE || './data/otp.db';
+// const dbFile = './data/otp1.db';
 
 try {
   log.info('Initializing database...', { dbFile });
