@@ -162,9 +162,12 @@ async function readDnsmasqLeases(searchIP) {
       return null;
     }
 
-    const [, mac] = foundLease.trim().split(/\s+/);
-    log.info('MAC address resolved from lease file', { searchIP, mac });
-    return mac;
+    const [, mac, ip, hostname] = foundLease.trim().split(/\s+/);
+    log.info('MAC address resolved from lease file', { searchIP, mac ,ip, hostname});
+    return {
+      mac,
+      hostname,
+    };
   } catch (err) {
     log.error('Error reading dnsmasq leases file', {
       error: err.message,
@@ -186,7 +189,7 @@ app.get('/capport', async (req, res) => {
   log.info('Capport API request received', { ip, queryIP: req.query.ip, requestIP: req.ip });
 
   try {
-    const mac = await readDnsmasqLeases(ip);
+    const {mac, hostname} = await readDnsmasqLeases(ip);
 
     if (!mac) {
       log.warn('MAC address not found for IP, defaulting to captive state', { ip });
@@ -267,6 +270,8 @@ app.post('/api/send-otp', async (req, res) => {
   const { email, browserInfo: { userAgent, platform } = {} } = req.body;
   const ip = req.ip || req.connection.remoteAddress;
 
+  const allowedDomains = ["underscorecs.com"];
+
   log.info('OTP send request initiated', { email, ip, userAgent });
 
   if (!email) {
@@ -274,8 +279,18 @@ app.post('/api/send-otp', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Email is required' });
   }
 
+  // Extract domain from email
+  const domain = email.split("@")[1]?.toLowerCase();
+
+  if (!allowedDomains.includes(domain)) {
+    return res.status(400).json({
+       success: false,
+       error: `Email domain not allowed. Allowed domains: ${allowedDomains.join(", ")}`
+    });
+  }
+
   try {
-    const mac = await readDnsmasqLeases(ip);
+    const {mac, hostname} = await readDnsmasqLeases(ip);
 
     if (!mac) {
       log.warn('MAC address not resolved for OTP request', { email, ip });
@@ -290,6 +305,7 @@ app.post('/api/send-otp', async (req, res) => {
     log.debug('Parsed user agent', {
       email,
       ip,
+      hostname,
       browser: result.browser.name,
       os: result.os.name,
       device: result.device.type,
@@ -326,7 +342,7 @@ app.post('/api/send-otp', async (req, res) => {
         result.browser.version || '',
         result.os.name || '',
         result.os.version || '',
-        result.device.type || 'Desktop',
+        hostname || 'Undefined',
         result.engine.name || '',
         result.device.type === 'mobile' ? 1 : 0,
         expiresAt,
@@ -337,6 +353,7 @@ app.post('/api/send-otp', async (req, res) => {
       ip,
       mac,
       browser: result.browser.name,
+      hostname,
       expiresAt: new Date(expiresAt).toISOString(),
     });
 
@@ -347,6 +364,7 @@ app.post('/api/send-otp', async (req, res) => {
       stack: err.stack,
       email,
       ip,
+      hostname, 
       errorCode: err.code,
     });
     res.status(500).json({ success: false, error: 'Failed to send OTP' });
@@ -414,8 +432,8 @@ app.post('/api/verify-otp', async (req, res) => {
 
     // Execute iptables rules
     const interface_name = process.env.INTERFACE_NAME || 'eth0';
-    const tcpCmd = `sudo /usr/sbin/iptables -t nat -I PREROUTING 1 -i ${interface_name} -p tcp -s ${ip} --dport 53 -j ACCEPT`;
-    const udpCmd = `sudo /usr/sbin/iptables -t nat -I PREROUTING 1 -i ${interface_name} -p udp -s ${ip} --dport 53 -j ACCEPT`;
+    const tcpCmd = `sudo /usr/sbin/iptables -t nat -I PREROUTING 1 -p tcp -s ${ip} --dport 53 -j ACCEPT`;
+    const udpCmd = `sudo /usr/sbin/iptables -t nat -I PREROUTING 1 -p udp -s ${ip} --dport 53 -j ACCEPT`;
 
     log.info('Executing iptables rules', { email, ip, interface_name });
 
