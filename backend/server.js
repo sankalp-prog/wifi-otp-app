@@ -291,6 +291,37 @@ app.post('/api/send-otp', async (req, res) => {
   }
 
   try {
+    const { mac } = (await readDnsmasqLeases(ip)) || {};
+
+    if (!mac) {
+      log.warn('MAC address not resolved during send-otp', { email, ip });
+      return res.json({
+        success: false,
+        error: 'Unable to identify device, please check you network connection',
+      });
+    }
+
+    // Check if the device
+    const existingDevices = await db.get('SELECT id FROM client_info WHERE email = ? AND mac_address = ?', [email, mac]);
+
+    if (!existingDevices) {
+      // New device, check limit
+      const MAX_DEVICES = parseInt(process.env.MAX_DEVICES_PER_EMAIL || '3');
+
+      const deviceCount = await db.get('SELECT COUNT(DISTINCT mac_address) as count FROM client_info WHERE email = ?', [email]);
+
+      if (deviceCount.count > MAX_DEVICES) {
+        log.warn('Device limit exceeded at OTP request', { email, mac, ip, currentDevices: deviceCount.count, maxDevices: MAX_DEVICES });
+        return res.status(403).json({
+          success: false,
+          error: `Maximun ${MAX_DEVICES} devices allowed per account. Please disconnect a device first.`,
+        });
+      }
+    } else {
+      log.info('Existing device re-authenticating', { email, mac, ip });
+    }
+
+    // Generate and send OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expires = Date.now() + 5 * 60 * 1000; // 5 min
 
