@@ -297,7 +297,7 @@ app.post('/api/send-otp', async (req, res) => {
       log.warn('MAC address not resolved during send-otp', { email, ip });
       return res.json({
         success: false,
-        error: 'Unable to identify device, please check you network connection',
+        error: 'Unable to identify device. Please check your network connection.',
       });
     }
 
@@ -310,13 +310,19 @@ app.post('/api/send-otp', async (req, res) => {
 
       const deviceCount = await db.get('SELECT COUNT(DISTINCT mac_address) as count FROM client_info WHERE email = ?', [email]);
 
-      if (deviceCount.count > MAX_DEVICES) {
+      if (deviceCount.count >= MAX_DEVICES) {
         log.warn('Device limit exceeded at OTP request', { email, mac, ip, currentDevices: deviceCount.count, maxDevices: MAX_DEVICES });
         return res.status(403).json({
           success: false,
-          error: `Maximun ${MAX_DEVICES} devices allowed per account. Please disconnect a device first.`,
+          error: `Maximum ${MAX_DEVICES} devices allowed per account. Please disconnect a device first.`,
         });
       }
+      log.info('New device within limit', {
+        email,
+        mac,
+        currentDevices: deviceCount.count,
+        maxDevices: MAX_DEVICES,
+      });
     } else {
       log.info('Existing device re-authenticating', { email, mac, ip });
     }
@@ -436,52 +442,6 @@ app.post('/api/verify-otp', async (req, res) => {
       ]
     );
 
-    // const prevClientData = await db.get(`SELECT * FROM client_info WHERE email = ?, mac_address = ?`, [email, mac]);
-
-    // let clientDataUpdateResult;
-
-    // if (prevClientData) {
-    //   clientDataUpdateResult = await db.run(
-    //     `UPDATE client_info SET email = ?, user_agent = ?, client_IP = ?, mac_address = ?, browser = ?, browser_version = ?, os = ?, os_version = ?, device = ?, engine = ?, is_mobile =?, captive = 0, expires_at = ? WHERE client_IP = ?`,
-    //     [
-    //       email,
-    //       userAgent,
-    //       ip,
-    //       mac || 'NULL',
-    //       result.browser.name || 'Unknown',
-    //       result.browser.version || '',
-    //       result.os.name || '',
-    //       result.os.version || '',
-    //       hostname || 'Undefined',
-    //       result.engine.name || '',
-    //       result.device.type === 'mobile' ? 1 : 0,
-    //       expiresAt,
-    //     ]
-    //   );
-    // } else {
-    //   // Store client info
-    //   await db.run(
-    //     `INSERT INTO client_info (
-    //     email, user_agent, client_IP, mac_address, browser, browser_version,
-    //     os, os_version, device, engine, is_mobile, captive, expires_at
-    //   )
-    //   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-    //     [
-    //       email,
-    //       userAgent,
-    //       ip,
-    //       mac || 'NULL',
-    //       result.browser.name || 'Unknown',
-    //       result.browser.version || '',
-    //       result.os.name || '',
-    //       result.os.version || '',
-    //       hostname || 'Undefined',
-    //       result.engine.name || '',
-    //       result.device.type === 'mobile' ? 1 : 0,
-    //       expiresAt,
-    //     ]
-    //   );
-    // }
     log.info('Client info stored in database', {
       email,
       ip,
@@ -490,11 +450,6 @@ app.post('/api/verify-otp', async (req, res) => {
       hostname,
       expiresAt: new Date(expiresAt).toISOString(),
     });
-
-    // // TODO: change this to the new update variable
-    // if (clientDataUpdateResult.changes === 0) {
-    //   log.warn('No client_info table rows updated during OTP verification', { email, ip });
-    // }
 
     // Execute iptables rules
     // const interface_name = process.env.INTERFACE_NAME || 'eth0';
