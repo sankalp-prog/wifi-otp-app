@@ -54,15 +54,16 @@ function App() {
     setMessage('');
 
     try {
-      const browserInfo = {
-        userAgent: navigator.userAgent,
-        platform: navigator.platform,
-      };
+      // const browserInfo = {
+      //   userAgent: navigator.userAgent,
+      //   platform: navigator.platform,
+      // };
       // const res = await fetch(`${API_BASE_URL}/send-otp`, {
       const res = await fetch(`/api/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, browserInfo }),
+        // body: JSON.stringify({ email, browserInfo }),
+        body: JSON.stringify({ email }),
       });
       const data = await res.json();
 
@@ -94,15 +95,22 @@ function App() {
 
     try {
       // const res = await fetch(`${API_BASE_URL}/verify-otp`, {
+
+      const browserInfo = {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+      };
       const res = await fetch(`/api/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, otp }),
+        body: JSON.stringify({ email, otp, browserInfo }),
       });
       const data = await res.json();
 
       if (data.success) {
         setStep('success');
+        // TODO: change the below to this -
+        // await fetch(`/capport`, { cache: 'no-store' });
         await fetch(`${API_BASE_URL}/capport/api`, { cache: 'no-store' });
       } else {
         setError(data.error || 'Verification failed');
