@@ -80,11 +80,12 @@ try {
     browser_version TEXT,
     os TEXT,
     os_version TEXT,
-    device TEXT,
-    engine TEXT,
+    hostname TEXT,
+    browser_engine TEXT,
     is_mobile INTEGER,
     captive INTEGER DEFAULT 1,
-    expires_at INTEGER
+    expires_at INTEGER,
+    UNIQUE(email, mac_address)
   )`);
   log.info('Client info table verified/created');
 } catch (error) {
@@ -163,7 +164,7 @@ async function readDnsmasqLeases(searchIP) {
     }
 
     const [, mac, ip, hostname] = foundLease.trim().split(/\s+/);
-    log.info('MAC address resolved from lease file', { searchIP, mac ,ip, hostname});
+    log.info('MAC address resolved from lease file', { searchIP, mac, ip, hostname });
     return {
       mac,
       hostname,
@@ -189,7 +190,7 @@ app.get('/capport', async (req, res) => {
   log.info('Capport API request received', { ip, queryIP: req.query.ip, requestIP: req.ip });
 
   try {
-    const {mac, hostname} = await readDnsmasqLeases(ip);
+    const { mac, hostname } = await readDnsmasqLeases(ip);
 
     if (!mac) {
       log.warn('MAC address not found for IP, defaulting to captive state', { ip });
@@ -267,12 +268,12 @@ app.get('/capport', async (req, res) => {
 
 // Send OTP
 app.post('/api/send-otp', async (req, res) => {
-  const { email, browserInfo: { userAgent, platform } = {} } = req.body;
+  const { email } = req.body;
   const ip = req.ip || req.connection.remoteAddress;
 
-  const allowedDomains = ["underscorecs.com"];
+  const allowedDomains = ['underscorecs.com'];
 
-  log.info('OTP send request initiated', { email, ip, userAgent });
+  log.info('OTP send request initiated', { email, ip });
 
   if (!email) {
     log.warn('OTP request missing email', { ip });
@@ -280,36 +281,18 @@ app.post('/api/send-otp', async (req, res) => {
   }
 
   // Extract domain from email
-  const domain = email.split("@")[1]?.toLowerCase();
+  const domain = email.split('@')[1]?.toLowerCase();
 
   if (!allowedDomains.includes(domain)) {
     return res.status(400).json({
-       success: false,
-       error: `Email domain not allowed. Allowed domains: ${allowedDomains.join(", ")}`
+      success: false,
+      error: `Email domain not allowed. Allowed domains: ${allowedDomains.join(', ')}`,
     });
   }
 
   try {
-    const {mac, hostname} = await readDnsmasqLeases(ip);
-
-    if (!mac) {
-      log.warn('MAC address not resolved for OTP request', { email, ip });
-    }
-
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expires = Date.now() + 5 * 60 * 1000; // 5 min
-
-    const parser = new UAParser(userAgent);
-    const result = parser.getResult();
-
-    log.debug('Parsed user agent', {
-      email,
-      ip,
-      hostname,
-      browser: result.browser.name,
-      os: result.os.name,
-      device: result.device.type,
-    });
 
     // Send email
     log.info('Sending OTP email', { email, ip });
@@ -325,38 +308,6 @@ app.post('/api/send-otp', async (req, res) => {
     await db.run('INSERT INTO otps (email, otp, expires) VALUES (?, ?, ?)', [email, otp, expires]);
     log.debug('OTP stored in database', { email, expiresAt: new Date(expires).toISOString() });
 
-    // Store client info
-    const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
-    await db.run(
-      `INSERT INTO client_info (
-        email, user_agent, client_IP, mac_address, browser, browser_version,
-        os, os_version, device, engine, is_mobile, captive, expires_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-      [
-        email,
-        userAgent,
-        ip,
-        mac || 'NULL',
-        result.browser.name || 'Unknown',
-        result.browser.version || '',
-        result.os.name || '',
-        result.os.version || '',
-        hostname || 'Undefined',
-        result.engine.name || '',
-        result.device.type === 'mobile' ? 1 : 0,
-        expiresAt,
-      ]
-    );
-    log.info('Client info stored in database', {
-      email,
-      ip,
-      mac,
-      browser: result.browser.name,
-      hostname,
-      expiresAt: new Date(expiresAt).toISOString(),
-    });
-
     res.json({ success: true, message: 'OTP sent to email' });
   } catch (err) {
     log.error('Failed to send OTP', {
@@ -364,7 +315,6 @@ app.post('/api/send-otp', async (req, res) => {
       stack: err.stack,
       email,
       ip,
-      hostname, 
       errorCode: err.code,
     });
     res.status(500).json({ success: false, error: 'Failed to send OTP' });
@@ -373,7 +323,8 @@ app.post('/api/send-otp', async (req, res) => {
 
 // Verify OTP
 app.post('/api/verify-otp', async (req, res) => {
-  const { email, otp } = req.body;
+  // const { email, otp } = req.body;
+  const { email, otp, browserInfo: { userAgent, platform } = {} } = req.body;
   const ip = req.ip || req.connection.remoteAddress;
 
   log.info('OTP verification request received', { email, ip, otpProvided: !!otp });
@@ -415,27 +366,111 @@ app.post('/api/verify-otp', async (req, res) => {
       return res.json({ success: false, error: 'OTP has expired' });
     }
 
-    // Mark as non-captive
-    const newExpiresAt = Date.now() + 2 * 60 * 60 * 1000; // +2h
-    const updateResult = await db.run('UPDATE client_info SET captive = 0, expires_at = ? WHERE client_IP = ?', [newExpiresAt, ip]);
+    const { mac, hostname } = (await readDnsmasqLeases(ip)) || {};
 
-    log.info('Client marked as authenticated', {
-      email,
-      ip,
-      rowsUpdated: updateResult.changes,
-      expiresAt: new Date(newExpiresAt).toISOString(),
-    });
-
-    if (updateResult.changes === 0) {
-      log.warn('No client_info rows updated during OTP verification', { email, ip });
+    if (!mac) {
+      // log.warn('MAC address not resolved for OTP request', { email, ip });
+      return res.json({ success: false, error: 'MAC address not resolved in DNS lease file' });
     }
 
+    const parser = new UAParser(userAgent);
+    const result = parser.getResult();
+
+    log.debug('Parsed user agent', {
+      email,
+      ip,
+      hostname,
+      browser: result.browser.name,
+      os: result.os.name,
+      device: result.device.type,
+    });
+
+    const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+
+    await db.run(
+      ` INSERT INTO client_info ( email, user_agent, client_IP, mac_address, browser, browser_version, os, os_version, hostname, browser_engine, is_mobile, captive, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?) ON CONFLICT(email, mac_address) DO UPDATE SET user_agent = excluded.user_agent, client_IP = excluded.client_IP, browser = excluded.browser, browser_version = excluded.browser_version, os = excluded.os, os_version = excluded.os_version, hostname = excluded.hostname, browser_engine = excluded.browser_engine, is_mobile = excluded.is_mobile, captive = 0, expires_at = excluded.expires_at `,
+      [
+        email,
+        userAgent,
+        ip,
+        mac || 'NULL',
+        result.browser.name || 'Unknown',
+        result.browser.version || '',
+        result.os.name || '',
+        result.os.version || '',
+        hostname || 'Undefined',
+        result.engine.name || '',
+        result.device.type === 'mobile' ? 1 : 0,
+        expiresAt,
+      ]
+    );
+
+    // const prevClientData = await db.get(`SELECT * FROM client_info WHERE email = ?, mac_address = ?`, [email, mac]);
+
+    // let clientDataUpdateResult;
+
+    // if (prevClientData) {
+    //   clientDataUpdateResult = await db.run(
+    //     `UPDATE client_info SET email = ?, user_agent = ?, client_IP = ?, mac_address = ?, browser = ?, browser_version = ?, os = ?, os_version = ?, device = ?, engine = ?, is_mobile =?, captive = 0, expires_at = ? WHERE client_IP = ?`,
+    //     [
+    //       email,
+    //       userAgent,
+    //       ip,
+    //       mac || 'NULL',
+    //       result.browser.name || 'Unknown',
+    //       result.browser.version || '',
+    //       result.os.name || '',
+    //       result.os.version || '',
+    //       hostname || 'Undefined',
+    //       result.engine.name || '',
+    //       result.device.type === 'mobile' ? 1 : 0,
+    //       expiresAt,
+    //     ]
+    //   );
+    // } else {
+    //   // Store client info
+    //   await db.run(
+    //     `INSERT INTO client_info (
+    //     email, user_agent, client_IP, mac_address, browser, browser_version,
+    //     os, os_version, device, engine, is_mobile, captive, expires_at
+    //   )
+    //   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+    //     [
+    //       email,
+    //       userAgent,
+    //       ip,
+    //       mac || 'NULL',
+    //       result.browser.name || 'Unknown',
+    //       result.browser.version || '',
+    //       result.os.name || '',
+    //       result.os.version || '',
+    //       hostname || 'Undefined',
+    //       result.engine.name || '',
+    //       result.device.type === 'mobile' ? 1 : 0,
+    //       expiresAt,
+    //     ]
+    //   );
+    // }
+    log.info('Client info stored in database', {
+      email,
+      ip,
+      mac,
+      browser: result.browser.name,
+      hostname,
+      expiresAt: new Date(expiresAt).toISOString(),
+    });
+
+    // // TODO: change this to the new update variable
+    // if (clientDataUpdateResult.changes === 0) {
+    //   log.warn('No client_info table rows updated during OTP verification', { email, ip });
+    // }
+
     // Execute iptables rules
-    const interface_name = process.env.INTERFACE_NAME || 'eth0';
+    // const interface_name = process.env.INTERFACE_NAME || 'eth0';
     const tcpCmd = `sudo /usr/sbin/iptables -t nat -I PREROUTING 1 -p tcp -s ${ip} --dport 53 -j ACCEPT`;
     const udpCmd = `sudo /usr/sbin/iptables -t nat -I PREROUTING 1 -p udp -s ${ip} --dport 53 -j ACCEPT`;
 
-    log.info('Executing iptables rules', { email, ip, interface_name });
+    log.info('Executing iptables rules', { email, ip });
 
     exec(tcpCmd, (err, stdout, stderr) => {
       if (err) {
